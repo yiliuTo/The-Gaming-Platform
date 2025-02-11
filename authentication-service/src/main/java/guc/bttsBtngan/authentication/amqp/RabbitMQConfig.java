@@ -1,5 +1,13 @@
 package guc.bttsBtngan.authentication.amqp;
 
+import com.azure.core.credential.TokenCredential;
+import com.azure.core.exception.ResourceExistsException;
+import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClient;
+import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClientBuilder;
+import com.azure.messaging.servicebus.administration.models.QueueProperties;
+import com.azure.spring.cloud.autoconfigure.implementation.servicebus.properties.AzureServiceBusProperties;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
+import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
 import guc.bttsBtngan.authentication.commands.Command;
 
 import java.util.*;
@@ -8,18 +16,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import org.springframework.amqp.core.AmqpTemplate;
-import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.handler.annotation.Headers;
 
-
+import com.azure.spring.messaging.servicebus.implementation.core.annotation.ServiceBusListener;
+import org.springframework.messaging.support.MessageBuilder;
 
 
 @Configuration
@@ -28,22 +33,29 @@ public class RabbitMQConfig {
     @Autowired
     private Map<String, Command> commands;
     @Autowired
-    private AmqpTemplate amqpTemplate;
+    private ServiceBusTemplate serviceBusTemplate;
     private static final String request_queue = "authentication_req";
     @Autowired
 	private ExecutorService threadPool;
 
-    @Bean(name = {request_queue})
-    public Queue request_queue() {
-        return new Queue(request_queue);
-    }
-
     @Bean
-    public MessageConverter converter() {
-        return new Jackson2JsonMessageConverter();
+    ServiceBusAdministrationClient adminClient(TokenCredential tokenCredential, AzureServiceBusProperties properties) {
+        if (properties.getNamespace() == null || properties.getDomainName() == null) {
+            throw new IllegalArgumentException("Namespace and domainName must not be null");
+        }
+        return new ServiceBusAdministrationClientBuilder()
+                .credential(properties.getNamespace() + "." + properties.getDomainName(), tokenCredential)
+                .buildClient();
     }
 
-
+    @Bean(name = {request_queue})
+    QueueProperties requestQueueProperties(ServiceBusAdministrationClient adminClient) {
+        try {
+            return adminClient.createQueue(request_queue);
+        } catch (ResourceExistsException e) {
+            return adminClient.getQueue(request_queue);
+        }
+    }
 
 	@Bean
 	public ExecutorService executor() {
@@ -74,8 +86,8 @@ public class RabbitMQConfig {
 //    	});
 //    }
 
-    @RabbitListener(queues = request_queue)
-    public void listen_2(HashMap<String, Object> payload, @Headers Map<String, Object> headers) {
+    @ServiceBusListener(destination = request_queue)
+    public void listen_sb(HashMap<String, Object> payload, @Headers Map<String, Object> headers) {
         HashMap<String, Object> map = new HashMap<>();
         try {
             payload.put("user_id", headers.get("user_id"));
@@ -86,11 +98,12 @@ public class RabbitMQConfig {
             map.put("error", e.getMessage());
             System.out.println("message is "+e.getMessage());
         } finally {
-            amqpTemplate.convertAndSend((String) headers.get("amqp_replyTo"), map, m -> {
-                m.getMessageProperties().setCorrelationId((String) headers.get("amqp_correlationId"));
-                m.getMessageProperties().setReplyTo((String) headers.get("amqp_replyTo"));
-                return m;
-            });
+            serviceBusTemplate.send((String) headers.get("amqp_replyTo"),
+                MessageBuilder
+                    .withPayload(map)
+                    .setHeader(ServiceBusMessageHeaders.CORRELATION_ID, headers.get("amqp_correlationId"))
+                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get("amqp_replyTo"))
+                    .build());
         }
     }
 

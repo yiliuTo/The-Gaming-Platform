@@ -1,5 +1,6 @@
 package guc.bttsBtngan.user;
 
+import com.azure.spring.messaging.implementation.annotation.EnableAzureMessaging;
 import guc.bttsBtngan.user.data.UserPostInteraction;
 import guc.bttsBtngan.user.services.UserPostRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -12,6 +13,7 @@ import java.util.List;
 
 @EnableMongoRepositories
 @SpringBootApplication
+@EnableAzureMessaging
 public class UserMain {
 	public static void main(String[] args) {
 		SpringApplication.run(UserMain.class, args);

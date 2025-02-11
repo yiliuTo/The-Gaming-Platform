@@ -2,11 +2,21 @@ package guc.bttsBtngan.http.controllers;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import javax.servlet.http.HttpServletResponse;
 
-import org.springframework.amqp.core.AmqpTemplate;
+import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import com.azure.messaging.servicebus.ServiceBusReceiverClient;
+import com.azure.messaging.servicebus.ServiceBusSessionReceiverClient;
+import com.azure.spring.messaging.servicebus.core.ServiceBusProcessorFactory;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
+import com.azure.spring.messaging.servicebus.core.listener.ServiceBusMessageListenerContainer;
+import com.azure.spring.messaging.servicebus.core.properties.ServiceBusContainerProperties;
+import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -17,12 +27,13 @@ import guc.bttsBtngan.http.amqp.RabbitMQConfig;
 @RestController
 public class Controller {
 	
-	private AmqpTemplate amqpTemplate;
+	private ServiceBusTemplate serviceBusTemplate;
 	private Map<String, String> serviceToCommand;
+	private ServiceBusSessionReceiverClient  receiverClient;
 	
 	@Autowired
-	public Controller(AmqpTemplate amqpTemplate) {
-		this.amqpTemplate = amqpTemplate;
+	public Controller(ServiceBusTemplate serviceBusTemplate, ServiceBusSessionReceiverClient receiverClient) {
+		this.serviceBusTemplate = serviceBusTemplate;
 		Map<String, String> serviceToCommand = new HashMap<>();
 		serviceToCommand.put("chat", "messaging_req");
 		serviceToCommand.put("authentication", "authentication_req");
@@ -30,6 +41,7 @@ public class Controller {
 		serviceToCommand.put("user", "user_req");
 		serviceToCommand.put("post", "post_req");
 		this.serviceToCommand = serviceToCommand;
+		this.receiverClient = receiverClient;
 	}
 
 
@@ -44,12 +56,31 @@ public class Controller {
 		if(!("loginCommand".equals(command) || "registerUserCommand".equals(command))) {
 			Map<String, Object> auth_body = new HashMap<>();
 			auth_body.put("token", headers.get("token-x"));
-			final Map<String, Object> auth_res = (Map<String, Object>) amqpTemplate.convertSendAndReceive(
-					serviceToCommand.get("authentication"), auth_body, m -> {
-	        	m.getMessageProperties().setHeader("command", "verifyCommand");
-	    		m.getMessageProperties().setReplyTo(RabbitMQConfig.reply_queue);
-	        	return m;
-	        });
+			String sessionId = UUID.randomUUID().toString();
+			serviceBusTemplate.send(
+				serviceToCommand.get("authentication"),
+				MessageBuilder.withPayload(auth_body)
+					.setHeader("command", "verifyCommand")
+					.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
+					.setHeader(ServiceBusMessageHeaders.SESSION_ID, sessionId)
+					.build());
+			// Accept the session (waits for the session to exist)
+			ServiceBusReceiverClient receiver = receiverClient.acceptSession(sessionId);
+
+			try {
+				// Receive the reply (only one message in this session)
+				ServiceBusReceivedMessage reply = receiver.receiveMessages(1)
+						.stream()
+						.findFirst()
+						.orElseThrow(() -> new RuntimeException("No reply received"));
+				if reply
+				receiver.complete(reply);
+			} finally {
+				receiver.close();
+				sessionReceiver.close();
+				sender.close();
+			}
+
 			if(auth_res.get("error") != null) {
 				servletResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
 				return auth_res;

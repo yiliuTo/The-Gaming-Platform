@@ -2,14 +2,15 @@ server:
   port: 2000
 
 spring:
-  rabbitmq:
-    host: "localhost"
-    port: 5672
-    username: "guest"
-    password: "guest"
-    listener:
-      simple:
-        concurrency: 1
-        max-concurrency: 1
-        prefetch: 1
+  cloud:
+    azure:
+      credential:
+        managed-identity-enabled: true
+        client-id: ${AZURE_CLIENT_ID}
+      servicebus:
+        namespace: "localhost"
+        entity-type: queue
+        processor:
+          max-concurrent-calls: 1
+          prefetch-count: 1
    

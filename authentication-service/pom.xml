@@ -59,6 +59,14 @@
     <artifactId>spring-boot-starter-amqp</artifactId>
     </dependency>
     <dependency>
+      <groupId>com.azure.spring</groupId>
+      <artifactId>spring-messaging-azure-servicebus</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.azure.spring</groupId>
+      <artifactId>spring-cloud-azure-starter</artifactId>
+    </dependency>
+    <dependency>
       <groupId>redis.clients</groupId>
       <artifactId>jedis</artifactId>
     </dependency>
