@@ -1,5 +1,6 @@
 package guc.bttsBtngan.notification;
 
+import com.azure.spring.messaging.implementation.annotation.EnableAzureMessaging;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
@@ -14,6 +15,7 @@ import java.util.Objects;
 
 
 @SpringBootApplication
+@EnableAzureMessaging
 public class NotificationMain {
 
 	public static void main(String[] args) throws IOException {

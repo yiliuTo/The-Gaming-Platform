@@ -1,4 +1,6 @@
 spring:
+  rabbitmq:
+    channel-rpc-timeout: 10000
   cloud:
     azure:
       credential:

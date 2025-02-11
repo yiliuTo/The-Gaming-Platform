@@ -1,20 +1,22 @@
 package guc.bttsBtngan.notification.amqp;
+import com.azure.core.credential.TokenCredential;
+import com.azure.core.exception.ResourceExistsException;
+import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClient;
+import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClientBuilder;
+import com.azure.messaging.servicebus.administration.models.QueueProperties;
+import com.azure.spring.cloud.autoconfigure.implementation.servicebus.properties.AzureServiceBusProperties;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
+import com.azure.spring.messaging.servicebus.implementation.core.annotation.ServiceBusListener;
 import guc.bttsBtngan.notification.commands.Command;
 
 import java.util.*;
 
-import org.springframework.amqp.core.AmqpTemplate;
-import org.springframework.amqp.core.Queue;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
-import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.handler.annotation.Headers;
-
-
+import org.springframework.messaging.support.MessageBuilder;
 
 
 @Configuration
@@ -23,13 +25,27 @@ public class RabbitMQConfig {
     @Autowired
     private Map<String, Command> commands;
     @Autowired
-    private AmqpTemplate amqpTemplate;
+    private ServiceBusTemplate serviceBusTemplate;
     private static final String request_queue = "notification_req";
    // private static final String reply_queue = "notification_gateway";
 
+    @Bean
+    ServiceBusAdministrationClient adminClient(TokenCredential tokenCredential, AzureServiceBusProperties properties) {
+        if (properties.getNamespace() == null || properties.getDomainName() == null) {
+            throw new IllegalArgumentException("Namespace and domainName must not be null");
+        }
+        return new ServiceBusAdministrationClientBuilder()
+                .credential(properties.getNamespace() + "." + properties.getDomainName(), tokenCredential)
+                .buildClient();
+    }
+
     @Bean(name = {request_queue})
-    public Queue request_queue() {
-        return new Queue(request_queue);
+    QueueProperties requestQueueProperties(ServiceBusAdministrationClient adminClient) {
+        try {
+            return adminClient.createQueue(request_queue);
+        } catch (ResourceExistsException e) {
+            return adminClient.getQueue(request_queue);
+        }
     }
 
 //    @Bean(name = {reply_queue})
@@ -37,12 +53,7 @@ public class RabbitMQConfig {
 //        return new Queue(reply_queue);
 //    }
 
-    @Bean
-    public MessageConverter converter() {
-        return new Jackson2JsonMessageConverter();
-    }
-
-    @RabbitListener(queues = request_queue)
+    @ServiceBusListener(destination = request_queue)
     public void listen(HashMap<String, Object> payload, @Headers Map<String, Object> headers) {
         HashMap<String, Object> map = new HashMap<>();
         try {
@@ -56,11 +67,11 @@ public class RabbitMQConfig {
             map.put("error", e.getMessage());
             System.out.println(e.getMessage());
         } finally {
-            amqpTemplate.convertAndSend((String) headers.get("amqp_replyTo"), map, m -> {
-                m.getMessageProperties().setCorrelationId((String) headers.get("amqp_correlationId"));
-                m.getMessageProperties().setReplyTo((String) headers.get("amqp_replyTo"));
-                return m;
-            });
+            serviceBusTemplate.send((String) headers.get(MessageHeaders.REPLY_CHANNEL),
+                    MessageBuilder
+                            .withPayload(map)
+                            .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get(MessageHeaders.REPLY_CHANNEL))
+                            .build());
             System.out.println("finished processing task: " + payload.get("type"));
         }
     }

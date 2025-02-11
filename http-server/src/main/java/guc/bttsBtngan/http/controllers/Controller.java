@@ -1,20 +1,18 @@
 package guc.bttsBtngan.http.controllers;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
 
 import javax.servlet.http.HttpServletResponse;
 
 import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
 import com.azure.messaging.servicebus.ServiceBusReceiverClient;
 import com.azure.messaging.servicebus.ServiceBusSessionReceiverClient;
-import com.azure.spring.messaging.servicebus.core.ServiceBusProcessorFactory;
 import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
-import com.azure.spring.messaging.servicebus.core.listener.ServiceBusMessageListenerContainer;
-import com.azure.spring.messaging.servicebus.core.properties.ServiceBusContainerProperties;
 import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,6 +28,9 @@ public class Controller {
 	private ServiceBusTemplate serviceBusTemplate;
 	private Map<String, String> serviceToCommand;
 	private ServiceBusSessionReceiverClient  receiverClient;
+
+	@Value("${spring.rabbitmq.channel-rpc-timeout}")
+	private long rpcTimeout;
 	
 	@Autowired
 	public Controller(ServiceBusTemplate serviceBusTemplate, ServiceBusSessionReceiverClient receiverClient) {
@@ -56,52 +57,69 @@ public class Controller {
 		if(!("loginCommand".equals(command) || "registerUserCommand".equals(command))) {
 			Map<String, Object> auth_body = new HashMap<>();
 			auth_body.put("token", headers.get("token-x"));
-			String sessionId = UUID.randomUUID().toString();
 			serviceBusTemplate.send(
 				serviceToCommand.get("authentication"),
 				MessageBuilder.withPayload(auth_body)
 					.setHeader("command", "verifyCommand")
 					.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
-					.setHeader(ServiceBusMessageHeaders.SESSION_ID, sessionId)
+					.setHeader(ServiceBusMessageHeaders.SESSION_ID, "verifyCommand")
 					.build());
 			// Accept the session (waits for the session to exist)
-			ServiceBusReceiverClient receiver = receiverClient.acceptSession(sessionId);
+			ServiceBusReceiverClient auth_receiver = receiverClient.acceptSession("verifyCommand");
 
-			try {
-				// Receive the reply (only one message in this session)
-				ServiceBusReceivedMessage reply = receiver.receiveMessages(1)
-						.stream()
-						.findFirst()
-						.orElseThrow(() -> new RuntimeException("No reply received"));
-				if reply
-				receiver.complete(reply);
-			} finally {
-				receiver.close();
-				sessionReceiver.close();
-				sender.close();
-			}
-
-			if(auth_res.get("error") != null) {
+			// Receive the reply (only one message in this session)
+			ServiceBusReceivedMessage auth_reply = auth_receiver.receiveMessages(1, Duration.ofMillis(rpcTimeout))
+					.stream()
+					.findFirst()
+					.orElseThrow(() -> new RuntimeException("No reply received"));
+			auth_receiver.complete(auth_reply);
+			HashMap<String, Object> auth_res = auth_reply.getBody().toObject(HashMap.class);
+			if (auth_res.containsKey("error")) {
 				servletResponse.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
 				return auth_res;
 			}
-			res = (Map<String, Object>) amqpTemplate.convertSendAndReceive(
-					serviceToCommand.get(service), body, m -> {
-	        	m.getMessageProperties().setHeader("command", command);
-	        	m.getMessageProperties().setHeader("user_id", auth_res.get("data").toString());
-	    		m.getMessageProperties().setReplyTo(RabbitMQConfig.reply_queue);
+			auth_receiver.close();
 
-	        	return m;
-	        });
+			serviceBusTemplate.send(
+				serviceToCommand.get(service), MessageBuilder.withPayload(body)
+					.setHeader("command", command)
+					.setHeader("user_id", auth_res.get("data").toString())
+					.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
+					.setHeader(ServiceBusMessageHeaders.SESSION_ID, command)
+					.build());
+
+			// Accept the session (waits for the session to exist)
+			ServiceBusReceiverClient command_receiver = receiverClient.acceptSession(command);
+
+			// Receive the reply (only one message in this session)
+			ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1, Duration.ofMillis(rpcTimeout))
+					.stream()
+					.findFirst()
+					.orElseThrow(() -> new RuntimeException("No reply received"));
+			command_receiver.complete(command_reply);
+			command_receiver.close();
+			res = command_reply.getBody().toObject(HashMap.class);
 		}
 		else {
-			res = (Map<String, Object>) amqpTemplate.convertSendAndReceive(
-					serviceToCommand.get(service), body, m -> {
-	        	m.getMessageProperties().setHeader("command", command);
-	    		m.getMessageProperties().setReplyTo(RabbitMQConfig.reply_queue);
+			serviceBusTemplate.send(
+					serviceToCommand.get(service),
+					MessageBuilder.withPayload(body)
+							.setHeader("command", command)
+							.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
+							.setHeader(ServiceBusMessageHeaders.SESSION_ID, command)
+							.build());
 
-	        	return m;
-	        });
+			// Accept the session (waits for the session to exist)
+			ServiceBusReceiverClient command_receiver = receiverClient.acceptSession(command);
+
+			// Receive the reply (only one message in this session)
+			ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1, Duration.ofMillis(rpcTimeout))
+					.stream()
+					.findFirst()
+					.orElseThrow(() -> new RuntimeException("No reply received"));
+			command_receiver.complete(command_reply);
+			command_receiver.close();
+			res = command_reply.getBody().toObject(HashMap.class);
 		}
 
 		if(res.get("error") != null) {

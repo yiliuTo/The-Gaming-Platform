@@ -7,8 +7,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 
-import org.springframework.amqp.core.AmqpTemplate;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 
 import com.google.api.core.ApiFuture;
@@ -29,7 +30,7 @@ import guc.bttsBtngan.chat.data.PrivateChat;
 public class PrivateChatService {
 	
 	@Autowired
-	AmqpTemplate amqpTemplate;
+	ServiceBusTemplate serviceBusTemplate;
 	
 	public String createPrivateChat(PrivateChat chat) throws Exception {
 		Firestore db = FirestoreClient.getFirestore();
@@ -68,7 +69,10 @@ public class PrivateChatService {
 			List<String> list = new ArrayList<>();
 			list.add(chat.getUser_1().equals(user_id) ? chat.getUser_2() : chat.getUser_1());
 			notificationMap.put("userIDs", list);
-			amqpTemplate.convertAndSend(RabbitMQConfig.notifications_queue, notificationMap);
+			serviceBusTemplate.send(
+					RabbitMQConfig.notifications_queue,
+					MessageBuilder.withPayload(notificationMap).build()
+			);
 			return "Added message with id: " + message_id;
 		} else {
 			throw new Exception("No private chat exists with id: " + private_id);

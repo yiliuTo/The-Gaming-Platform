@@ -8,17 +8,13 @@ import com.azure.messaging.servicebus.administration.models.QueueProperties;
 import com.azure.spring.cloud.autoconfigure.implementation.servicebus.properties.AzureServiceBusProperties;
 import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
 import com.azure.spring.messaging.servicebus.implementation.core.annotation.ServiceBusListener;
-import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
 import guc.bttsBtngan.user.commands.Command;
 
-import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import guc.bttsBtngan.user.commands.UserUser.UpdateUserCommand;
-import org.springframework.amqp.core.Queue;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
@@ -29,10 +25,6 @@ import org.springframework.messaging.support.MessageBuilder;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 
 
@@ -108,10 +100,10 @@ public class RabbitMQConfig {
         } catch (Exception e) {
             map.put("error", e.getMessage());
         } finally {
-            serviceBusTemplate.send((String) headers.get("amqp_replyTo"), MessageBuilder
+            serviceBusTemplate.send((String) headers.get(MessageHeaders.REPLY_CHANNEL),
+                MessageBuilder
                     .withPayload(map)
-                    .setHeader(ServiceBusMessageHeaders.CORRELATION_ID, headers.get("amqp_correlationId"))
-                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get("amqp_replyTo"))
+                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get(MessageHeaders.REPLY_CHANNEL))
                     .build());
         }
     }

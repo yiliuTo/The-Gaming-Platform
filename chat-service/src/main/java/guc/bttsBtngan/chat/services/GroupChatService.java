@@ -7,8 +7,9 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 
-import org.springframework.amqp.core.AmqpTemplate;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 
 import com.google.api.core.ApiFuture;
@@ -28,9 +29,9 @@ import guc.bttsBtngan.chat.data.GroupChat;
 
 @Service
 public class GroupChatService {	
-	
+
 	@Autowired
-	AmqpTemplate amqpTemplate;
+	ServiceBusTemplate serviceBusTemplate;
 	
 	public String createGroup(GroupChat chat) throws InterruptedException, ExecutionException {
 		List<String> participants = new ArrayList<>();
@@ -60,7 +61,10 @@ public class GroupChatService {
 			notificationMap.put("type", "changeAdmin");
 			chat.getParticipants().remove(user_id);
 			notificationMap.put("userIDs", chat.getParticipants());
-			amqpTemplate.convertAndSend(RabbitMQConfig.notifications_queue, notificationMap);
+			serviceBusTemplate.send(
+					RabbitMQConfig.notifications_queue,
+					MessageBuilder.withPayload(notificationMap).build()
+			);
 			throw new Exception("the new admin must be a member of the group");
 		} else {
 			throw new Exception("No group exists with id: " + group_id);
@@ -98,7 +102,10 @@ public class GroupChatService {
 			notificationMap.put("type", "joinGroup");
 			chat.getParticipants().remove(user_id);
 			notificationMap.put("userIDs", chat.getParticipants());
-			amqpTemplate.convertAndSend(RabbitMQConfig.notifications_queue, notificationMap);
+			serviceBusTemplate.send(
+					RabbitMQConfig.notifications_queue,
+					MessageBuilder.withPayload(notificationMap).build()
+			);
 			return "Write result: " + result;
 		} else {
 			throw new Exception("No group exists with id: " + group_id);
@@ -140,7 +147,10 @@ public class GroupChatService {
 			notificationMap.put("type", "message");
 			chat.getParticipants().remove(user_id);
 			notificationMap.put("userIDs", chat.getParticipants());
-			amqpTemplate.convertAndSend(RabbitMQConfig.notifications_queue, notificationMap);
+			serviceBusTemplate.send(
+					RabbitMQConfig.notifications_queue,
+					MessageBuilder.withPayload(notificationMap).build()
+			);
 			return "Added message with id: " + message_id;
 		} else {
 			throw new Exception("No group exists with id: " + group_id);

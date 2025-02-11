@@ -1,11 +1,13 @@
 package guc.bttsBtngan.post.services;
 
-import java.io.IOException;
-import java.sql.Timestamp;
-import java.util.concurrent.ExecutionException;
 import java.util.*;
 
 
+import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import com.azure.messaging.servicebus.ServiceBusReceiverClient;
+import com.azure.messaging.servicebus.ServiceBusSessionReceiverClient;
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
+import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
 import guc.bttsBtngan.post.amqp.RabbitMQConfig;
 import guc.bttsBtngan.post.data.Comment;
 import guc.bttsBtngan.post.data.Comment.CommentVote;
@@ -14,7 +16,6 @@ import guc.bttsBtngan.post.data.Post.PostVote;
 import guc.bttsBtngan.post.data.Post.PostReport;
 import guc.bttsBtngan.post.firebase.FirebaseImageService;
 
-import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoOperations;
@@ -23,6 +24,8 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.MessageHeaders;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
@@ -35,7 +38,9 @@ public class PostService {
     @Autowired
     MongoOperations mongoOperations;
 	@Autowired
-	private AmqpTemplate amqpTemplate;
+	private ServiceBusTemplate serviceBusTemplate;
+	@Autowired
+	private ServiceBusSessionReceiverClient receiverClient;
 
 	public String createPost(Post post) throws Exception {
 		if(post.getUserId() == null)
@@ -71,10 +76,24 @@ public class PostService {
         type_ID.put("type", "post");
         type_ID.put("user_id", post.getUserId());
 
-       ArrayList<String> followers=(ArrayList<String>)amqpTemplate.convertSendAndReceive("user_req",type_ID,  m -> {
-        m.getMessageProperties().setHeader("command", "getAllFollowersCommand");
-        return m;
-    });    
+		serviceBusTemplate.send("user_req",
+			MessageBuilder.withPayload(type_ID)
+				.setHeader("command", "getAllFollowersCommand")
+				.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.temporary_reply_queue)
+				.setHeader(ServiceBusMessageHeaders.SESSION_ID, "getAllFollowersCommand")
+				.build());
+
+		// Accept the session (waits for the session to exist)
+		ServiceBusReceiverClient command_receiver = receiverClient.acceptSession("getAllFollowersCommand");
+
+		// Receive the reply (only one message in this session)
+		ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new RuntimeException("No reply received"));
+		command_receiver.complete(command_reply);
+		command_receiver.close();
+		ArrayList<String> followers = command_reply.getBody().toObject(ArrayList.class);
        if(followers!=null && followers.size()!=0)
        {
            
@@ -215,10 +234,10 @@ public class PostService {
         HashMap<String, Object> type_IDs= new HashMap<String, Object>();
 	  	type_IDs.put("type", message);
 	  	type_IDs.put("userIDs", followers);
-        amqpTemplate.convertAndSend("notification_req",type_IDs,  m -> {
-            m.getMessageProperties().setHeader("command", "createNotificationCommand");
-            return m;
-        });
+		serviceBusTemplate.send(
+				"notification_req",
+				MessageBuilder.withPayload(type_IDs).setHeader("command", "createNotificationCommand").build()
+		);
 	}
     public String commentPost(String userId, String postId, String comment)throws Exception {
     	if(comment == null)
@@ -518,12 +537,24 @@ public class PostService {
 //					return m;
 //				});
 		//then check if he is blocked
-		final List<String> res = (List<String>) amqpTemplate.convertSendAndReceive(
-				"user_req", body, m -> {
-					m.getMessageProperties().setHeader("command", "blockedByCommand");
-					m.getMessageProperties().setReplyTo(RabbitMQConfig.reply_queue);//reply queue
-					return m;
-				});
+		serviceBusTemplate.send("user_req",
+				MessageBuilder.withPayload(body)
+						.setHeader("command", "blockedByCommand")
+						.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
+						.setHeader(ServiceBusMessageHeaders.SESSION_ID, "blockedByCommand")
+						.build());
+
+		// Accept the session (waits for the session to exist)
+		ServiceBusReceiverClient command_receiver = receiverClient.acceptSession("blockedByCommand");
+
+		// Receive the reply (only one message in this session)
+		ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new RuntimeException("No reply received"));
+		command_receiver.complete(command_reply);
+		command_receiver.close();
+		final List<String> res = command_reply.getBody().toObject(List.class);
 		return true && !res.contains(suspiciousUser);
 	}
 	public boolean validUserId(String me,List<Post>posts){
@@ -538,12 +569,24 @@ public class PostService {
 //					return m;
 //				});
 		//then check if he is blocked
-		final List<String> res = (List<String>) amqpTemplate.convertSendAndReceive(
-				"user_req", body, m -> {
-					m.getMessageProperties().setHeader("command", "blockedByCommand");
-					m.getMessageProperties().setReplyTo(RabbitMQConfig.reply_queue);//reply queue
-					return m;
-				});
+		serviceBusTemplate.send("user_req",
+				MessageBuilder.withPayload(body)
+						.setHeader("command", "blockedByCommand")
+						.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
+						.setHeader(ServiceBusMessageHeaders.SESSION_ID, "blockedByCommand")
+						.build());
+
+		// Accept the session (waits for the session to exist)
+		ServiceBusReceiverClient command_receiver = receiverClient.acceptSession("blockedByCommand");
+
+		// Receive the reply (only one message in this session)
+		ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new RuntimeException("No reply received"));
+		command_receiver.complete(command_reply);
+		command_receiver.close();
+		final List<String> res = command_reply.getBody().toObject(List.class);
 		posts.removeIf(p -> res!=null && res.contains(p.getUserId()));
 		return true;
 	}
@@ -702,11 +745,24 @@ public class PostService {
 	      type_IDs.put("type", "post");
 	      type_IDs.put("user_id", userId);
 
-	     ArrayList<String> blockingUsers=(ArrayList<String>)amqpTemplate.convertSendAndReceive("user_req",type_IDs,  m -> {
-	      m.getMessageProperties().setHeader("command", "blockedByCommand");
-	      return m;
-	  });    
-	        
+		serviceBusTemplate.send("user_req",
+				MessageBuilder.withPayload(type_IDs)
+						.setHeader("command", "blockedByCommand")
+						.setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.temporary_reply_queue)
+						.setHeader(ServiceBusMessageHeaders.SESSION_ID, "blockedByCommand")
+						.build());
+
+		// Accept the session (waits for the session to exist)
+		ServiceBusReceiverClient command_receiver = receiverClient.acceptSession("blockedByCommand");
+
+		// Receive the reply (only one message in this session)
+		ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new RuntimeException("No reply received"));
+		command_receiver.complete(command_reply);
+		command_receiver.close();
+		ArrayList<String> blockingUsers = command_reply.getBody().toObject(ArrayList.class);
 	     
 	     
 	        Query query = new Query();

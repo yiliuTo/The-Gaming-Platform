@@ -4,16 +4,18 @@ package guc.bttsBtngan.user.services;
 //import com.jlefebure.spring.boot.minio.MinioException;
 //import com.jlefebure.spring.boot.minio.MinioService;
 
+import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
 import guc.bttsBtngan.user.data.UserPostInteraction;
 import guc.bttsBtngan.user.data.UserReports;
 import guc.bttsBtngan.user.data.UserUserInteraction;
 import guc.bttsBtngan.user.firebase.FirebaseImageService;
-import org.springframework.amqp.core.AmqpTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.mongodb.core.MongoOperations;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -32,7 +34,7 @@ public class UserUserService {
     // this class will deal with all user-user interaction and database operations in postgres
 
     @Autowired
-    private AmqpTemplate amqpTemplate;
+    private ServiceBusTemplate serviceBusTemplate;
 
     private PasswordEncoder passwordEncoder;
 
@@ -349,11 +351,10 @@ public class UserUserService {
         HashMap<String, Object> type_ID= new HashMap<String, Object>();
         type_ID.put("type", "You've a new follower");
         type_ID.put("userID", follow);
-        amqpTemplate.convertAndSend("notification_req",type_ID,  m -> {
-            m.getMessageProperties().setHeader("command", "createNotificationCommand");
-            System.out.printf("Sending message: %s", m.getBody());
-            return m;
-        });
+        Message<HashMap<String, Object>> message = MessageBuilder.withPayload(type_ID).setHeader("command", "createNotificationCommand").build();
+        serviceBusTemplate.send("notification_req", message);
+        System.out.printf("Sending message: %s", message.getPayload());
+
         System.out.printf("Notification sent to %s", follow);
     }
     public String followUser(String userId,String userToBeFollowedId) {

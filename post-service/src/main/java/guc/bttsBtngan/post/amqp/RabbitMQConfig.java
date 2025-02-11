@@ -2,22 +2,18 @@ package guc.bttsBtngan.post.amqp;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 import com.azure.core.credential.TokenCredential;
 import com.azure.core.exception.ResourceExistsException;
+import com.azure.messaging.servicebus.ServiceBusReceivedMessage;
+import com.azure.messaging.servicebus.ServiceBusReceiverClient;
+import com.azure.messaging.servicebus.ServiceBusSessionReceiverClient;
 import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClient;
 import com.azure.messaging.servicebus.administration.ServiceBusAdministrationClientBuilder;
 import com.azure.messaging.servicebus.administration.models.QueueProperties;
 import com.azure.spring.cloud.autoconfigure.implementation.servicebus.properties.AzureServiceBusProperties;
 import com.azure.spring.messaging.servicebus.core.ServiceBusTemplate;
 import com.azure.spring.messaging.servicebus.implementation.core.annotation.ServiceBusListener;
-import com.azure.spring.messaging.servicebus.support.ServiceBusMessageHeaders;
-import guc.bttsBtngan.post.commands.SearchPostCommand;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Bean;
@@ -40,6 +36,7 @@ public class RabbitMQConfig {
 //	private ExecutorService threadPool;
     private static final String request_queue = "post_req";
 	public static final String reply_queue = "gateway";
+	public static final String temporary_reply_queue = "temporary_reply_queue";
 
     @Bean
     ServiceBusAdministrationClient adminClient(TokenCredential tokenCredential, AzureServiceBusProperties properties) {
@@ -57,6 +54,15 @@ public class RabbitMQConfig {
             return adminClient.createQueue(request_queue);
         } catch (ResourceExistsException e) {
             return adminClient.getQueue(request_queue);
+        }
+    }
+
+    @Bean(name = {temporary_reply_queue})
+    QueueProperties temporyQueueProperties(ServiceBusAdministrationClient adminClient) {
+        try {
+            return adminClient.createQueue(temporary_reply_queue);
+        } catch (ResourceExistsException e) {
+            return adminClient.getQueue(temporary_reply_queue);
         }
     }
 
@@ -104,18 +110,17 @@ public class RabbitMQConfig {
         } catch (Exception e) {
             map.put("error", e.getMessage());
         } finally {
-            serviceBusTemplate.send((String) headers.get("amqp_replyTo"),
+            serviceBusTemplate.send((String) headers.get(MessageHeaders.REPLY_CHANNEL),
                 MessageBuilder
                     .withPayload(map)
-                    .setHeader(ServiceBusMessageHeaders.CORRELATION_ID, headers.get("amqp_correlationId"))
-                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get("amqp_replyTo"))
+                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get(MessageHeaders.REPLY_CHANNEL))
                     .build());
         }
     }
 
     // dummy method for testing
     @Bean
-    public ApplicationRunner runner(ServiceBusTemplate template) {
+    public ApplicationRunner runner(ServiceBusTemplate template, ServiceBusSessionReceiverClient receiverClient) {
         return args -> {
         	for(char c='a' ; c<'z'; c++) {
             	Map<String, Object> map = new HashMap<>();
@@ -127,7 +132,18 @@ public class RabbitMQConfig {
                                 .setHeader("command", "searchPostCommand")
                                 .setHeader(MessageHeaders.REPLY_CHANNEL, RabbitMQConfig.reply_queue)
                                 .build());
-                System.out.println(c);
+
+                // Accept the session (waits for the session to exist)
+                ServiceBusReceiverClient command_receiver = receiverClient.acceptSession("searchPostCommand");
+
+                // Receive the reply (only one message in this session)
+                ServiceBusReceivedMessage command_reply = command_receiver.receiveMessages(1)
+                        .stream()
+                        .findFirst()
+                        .orElseThrow(() -> new RuntimeException("No reply received"));
+                command_receiver.complete(command_reply);
+                command_receiver.close();
+                System.out.println(command_reply+" "+c);
         	}
         };
     }

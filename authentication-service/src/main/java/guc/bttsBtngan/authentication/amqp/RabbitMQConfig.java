@@ -98,11 +98,10 @@ public class RabbitMQConfig {
             map.put("error", e.getMessage());
             System.out.println("message is "+e.getMessage());
         } finally {
-            serviceBusTemplate.send((String) headers.get("amqp_replyTo"),
+            serviceBusTemplate.send((String) headers.get(MessageHeaders.REPLY_CHANNEL),
                 MessageBuilder
                     .withPayload(map)
-                    .setHeader(ServiceBusMessageHeaders.CORRELATION_ID, headers.get("amqp_correlationId"))
-                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get("amqp_replyTo"))
+                    .setHeader(MessageHeaders.REPLY_CHANNEL, headers.get(MessageHeaders.REPLY_CHANNEL))
                     .build());
         }
     }
